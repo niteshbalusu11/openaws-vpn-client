@@ -150,12 +150,14 @@ pub extern "C" fn openaws_vpn_client_set_config(
         .save_config(PathBuf::from(&config_path));
 
     // Update the remote server
-    let mut remote = client.vpn_app.config.remote.lock().unwrap();
-    *remote = Some((server_address, config.port as u16));
+    {
+        let mut remote = client.vpn_app.config.remote.lock().unwrap();
+        println!("Remote: {:?}", remote);
+        *remote = Some((server_address, config.port as u16));
+    }
 
     // Resolve DNS addresses
     client.vpn_app.dns.resolve_addresses();
-
     0
 }
 

@@ -16,7 +16,7 @@ documentation = "https://docs.rs/openaws-vpn-client/"
 # Library configuration
 [lib]
 name = "openaws_vpn"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 lazy_static = "=1.4.0"

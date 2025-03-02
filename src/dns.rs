@@ -26,18 +26,41 @@ impl DnsResolver {
     }
 
     fn resolve_to_ip_list(&self, remote: String) -> Vec<IpAddr> {
+        println!("Attempting DNS resolution for: {}", remote);
         self.log
             .append(format!("Looking up into '{}'...", remote).as_str());
 
         let resolver = domain::resolv::StubResolver::new();
-        let d = Dname::<Vec<u8>>::from_str(&remote).unwrap();
-        let r = self
+
+        let d = match Dname::<Vec<u8>>::from_str(&remote) {
+            Ok(d) => d,
+            Err(e) => {
+                println!("ERROR parsing domain name: {:?}", e);
+                return vec![];
+            }
+        };
+
+        println!("Sending DNS query...");
+        let r = match self
             .runtime
             .block_on(async { resolver.query((d, Rtype::A, Class::In)).await })
-            .unwrap();
+        {
+            Ok(r) => r,
+            Err(e) => {
+                println!("ERROR in DNS query: {:?}", e);
+                return vec![];
+            }
+        };
 
         let msg = r.into_message();
-        let ans = msg.answer().unwrap().limit_to::<A>();
+        let ans = match msg.answer() {
+            Ok(ans) => ans.limit_to::<A>(),
+            Err(e) => {
+                println!("ERROR getting answer section: {:?}", e);
+                return vec![];
+            }
+        };
+
         let all = ans
             .filter(|v| v.is_ok())
             .map(|v| v.unwrap())
@@ -46,14 +69,23 @@ impl DnsResolver {
             .map(|v| IpAddr::V4(v))
             .inspect(|v| self.log.append(format!("Resolved '{}'.", v).as_str()))
             .collect::<Vec<_>>();
+
+        println!("Resolution returned {} IPs", all.len());
         all
     }
 
     pub fn resolve_addresses(&self) {
-        let remote = self.config.remote.lock().unwrap().deref().clone().unwrap();
+        println!("Resolving addresses...");
+        println!("Attempting to lock remote mutex...");
+        let remote_lock = self.config.remote.lock();
+        println!("Got lock result: {:?}", remote_lock);
+        let remote = remote_lock.unwrap().deref().clone().unwrap();
+        println!("Released lock");
 
         let random_start = rng_domain();
+
         let remote_with_rng_domain = format!("{}.{}", random_start, remote.0);
+        println!("Attempting to resolve: {}", remote_with_rng_domain);
 
         let mut all = self.resolve_to_ip_list(remote_with_rng_domain.clone());
         if all.is_empty() {
