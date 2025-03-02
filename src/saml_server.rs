@@ -1,11 +1,9 @@
+use crate::app::VpnApp;
 use crate::cmd::{connect_ovpn, ProcessInfo};
 use crate::config::Pwd;
-use crate::state_manager::StateManager;
 use crate::task::{OavcProcessTask, OavcTask};
-use crate::VpnApp;
 use std::collections::HashMap;
 use std::ops::Deref;
-use std::rc::Rc;
 use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -20,7 +18,7 @@ impl SamlServer {
         SamlServer {}
     }
 
-    pub fn start_server(&self, app: Rc<VpnApp>) {
+    pub fn start_server(&self, app: Arc<VpnApp>) {
         app.log.append("Starting SAML server at 0.0.0.0:35001...");
         let (tx, rx) = std::sync::mpsc::sync_channel::<Saml>(1);
 
@@ -35,24 +33,26 @@ impl SamlServer {
             .and(warp::body::form())
             .and(sender)
             .and(pwd)
-            .and_then(move |data: HashMap<String, String>,
-                            sender: SyncSender<Saml>,
-                            pwd: Arc<Mutex<Option<Pwd>>>| {
-                async move {
-                    let pwd = pwd.lock().await;
-                    let saml = Saml {
-                        data: data["SAMLResponse"].clone(),
-                        pwd: pwd.deref().as_ref().unwrap().pwd.clone(),
-                    };
-                    sender.send(saml).unwrap();
-                    println!("Got SAML data!");
+            .and_then(
+                move |data: HashMap<String, String>,
+                      sender: SyncSender<Saml>,
+                      pwd: Arc<Mutex<Option<Pwd>>>| {
+                    async move {
+                        let pwd = pwd.lock().await;
+                        let saml = Saml {
+                            data: data["SAMLResponse"].clone(),
+                            pwd: pwd.deref().as_ref().unwrap().pwd.clone(),
+                        };
+                        sender.send(saml).unwrap();
+                        println!("Got SAML data!");
 
-                    Result::<WithStatus<_>, Rejection>::Ok(warp::reply::with_status(
-                        "Got SAMLResponse field, it is now safe to close this window",
-                        StatusCode::OK,
-                    ))
-                }
-            });
+                        Result::<WithStatus<_>, Rejection>::Ok(warp::reply::with_status(
+                            "Got SAMLResponse field, it is now safe to close this window",
+                            StatusCode::OK,
+                        ))
+                    }
+                },
+            );
 
         let handle = runtime.spawn(warp::serve(saml).run(([0, 0, 0, 0], 35001)));
 
@@ -63,7 +63,9 @@ impl SamlServer {
             log,
         };
 
-        app.server.replace(Some(join));
+        let mut server = app.server.lock().unwrap();
+        *server = Some(join);
+
         let log = app.log.clone();
         let addr = app.config.addresses.clone();
         let port = app.config.remote.clone();
@@ -103,7 +105,9 @@ impl SamlServer {
                 runtime.clone().spawn(async move {
                     let con = connect_ovpn(log.clone(), config, addr, port, data, info).await;
                     let man = manager.lock().unwrap();
-                    man.as_ref().unwrap().try_disconnect();
+                    if let Some(ref man) = *man {
+                        man.disconnect();
+                    }
                     con
                 })
             };
@@ -116,10 +120,10 @@ impl SamlServer {
             }
 
             let state_manager = stager.clone();
-            StateManager::change_state(move || {
-                let stager = state_manager.lock().unwrap();
-                stager.as_ref().unwrap().set_connected();
-            });
+            let state_mgr = state_manager.lock().unwrap();
+            if let Some(ref state_mgr) = *state_mgr {
+                state_mgr.set_connected();
+            }
         });
     }
 }

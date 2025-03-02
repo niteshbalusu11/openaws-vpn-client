@@ -1,24 +1,23 @@
 use crate::config::Config;
-use crate::Log;
+use crate::log::Log;
 use domain::base::iana::Class;
 use domain::base::{Dname, Rtype};
 use domain::rdata::A;
 use rand::prelude::*;
 use std::net::IpAddr;
 use std::ops::Deref;
-use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
 pub struct DnsResolver {
-    pub config: Rc<Config>,
+    pub config: Arc<Config>,
     pub log: Arc<Log>,
     pub runtime: Arc<Runtime>,
 }
 
 impl DnsResolver {
-    pub fn new(config: Rc<Config>, log: Arc<Log>, runtime: Arc<Runtime>) -> Self {
+    pub fn new(config: Arc<Config>, log: Arc<Log>, runtime: Arc<Runtime>) -> Self {
         Self {
             config,
             log,
@@ -31,7 +30,7 @@ impl DnsResolver {
             .append(format!("Looking up into '{}'...", remote).as_str());
 
         let resolver = domain::resolv::StubResolver::new();
-        let d: domain::base::Dname<Vec<u8>> = Dname::from_str(&remote).unwrap();
+        let d = Dname::<Vec<u8>>::from_str(&remote).unwrap();
         let r = self
             .runtime
             .block_on(async { resolver.query((d, Rtype::A, Class::In)).await })
@@ -50,22 +49,22 @@ impl DnsResolver {
         all
     }
 
-
     pub fn resolve_addresses(&self) {
         let remote = self.config.remote.lock().unwrap().deref().clone().unwrap();
 
         let random_start = rng_domain();
         let remote_with_rng_domain = format!("{}.{}", random_start, remote.0);
 
-
         let mut all = self.resolve_to_ip_list(remote_with_rng_domain.clone());
         if all.is_empty() {
+            self.log.append(format!(
+                "Unable to resolve any addresses at '{}'.",
+                remote_with_rng_domain.as_str()
+            ));
             self.log
-                .append(format!("Unable to resolve any addresses at '{}'.", remote_with_rng_domain.as_str()));
-            self.log.append("Attempting to resolve without any randomized domain...");
+                .append("Attempting to resolve without any randomized domain...");
             all = self.resolve_to_ip_list(remote.0);
         };
-
 
         let mut br = self.config.addresses.lock().unwrap();
         *br = Some(all);

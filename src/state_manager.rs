@@ -1,61 +1,63 @@
+use crate::app::State;
 use crate::consts::*;
 use crate::log::Log;
-use crate::State;
-use gtk::glib::idle_add_once;
-use gtk::prelude::*;
-use gtk::{Button, Label};
 use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::Arc;
 
-#[derive(Clone)]
 pub struct StateManager {
-    pub label: Rc<Label>,
     pub log: Arc<Log>,
-    pub btn: Rc<Button>,
     pub state: RefCell<State>,
+    pub callbacks: RefCell<Vec<Box<dyn Fn(State) + Send + Sync + 'static>>>,
 }
 
 unsafe impl Send for StateManager {}
 unsafe impl Sync for StateManager {}
 
 impl StateManager {
-    pub fn new(label: Rc<Label>, log: Arc<Log>, btn: Rc<Button>) -> StateManager {
+    pub fn new(log: Arc<Log>) -> StateManager {
         let manager = StateManager {
-            label,
             log,
-            btn,
             state: RefCell::new(State::Disconnected),
+            callbacks: RefCell::new(Vec::new()),
         };
         return manager;
     }
 
-    pub fn change_state<F>(f: F)
+    pub fn add_callback<F>(&self, callback: F)
     where
-        F: Fn() + std::marker::Send + 'static,
+        F: Fn(State) + Send + Sync + 'static,
     {
-        idle_add_once(move || {
-            f();
-        });
+        self.callbacks.borrow_mut().push(Box::new(callback));
     }
-}
 
-impl StateManager {
+    fn notify_state_change(&self, state: State) {
+        for callback in self.callbacks.borrow().iter() {
+            callback(state);
+        }
+    }
+
     pub fn set_connecting(&self) {
         self.state.replace(State::Connecting);
-        self.label.set_label(CONNECTING);
-        self.btn.set_label(BTN_DISCONNECT);
+        self.log.append(CONNECTING);
+        self.notify_state_change(State::Connecting);
     }
 
     pub fn set_disconnected(&self) {
         self.state.replace(State::Disconnected);
-        self.label.set_label(DISCONNECTED);
-        self.btn.set_label(BTN_CONNECT);
+        self.log.append(DISCONNECTED);
+        self.notify_state_change(State::Disconnected);
     }
 
     pub fn set_connected(&self) {
         self.state.replace(State::Connected);
-        self.label.set_label(CONNECTED);
-        self.btn.set_label(BTN_DISCONNECT);
+        self.log.append(CONNECTED);
+        self.notify_state_change(State::Connected);
+    }
+
+    pub fn get_state(&self) -> State {
+        *self.state.borrow()
     }
 }
+
+// Don't derive Clone for StateManager since it contains callbacks
+// that can't be easily cloned

@@ -1,5 +1,5 @@
 use crate::cmd::{kill_openvpn, ProcessInfo};
-use crate::Log;
+use crate::log::Log;
 use std::sync::Arc;
 
 pub struct OavcTask<T> {
@@ -59,3 +59,6 @@ impl<T> OavcProcessTask<T> {
 
 unsafe impl<T> Send for OavcTask<T> {}
 unsafe impl<T> Sync for OavcTask<T> {}
+
+unsafe impl<T> Send for OavcProcessTask<T> {}
+unsafe impl<T> Sync for OavcProcessTask<T> {}

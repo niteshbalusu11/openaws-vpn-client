@@ -10,7 +10,7 @@ homepage = "https://github.com/JonathanxD/openaws-vpn-client"
 repository = "https://github.com/JonathanxD/openaws-vpn-client"
 readme = "README.md"
 keywords = ["vpn", "openaws", "vpn-client"]
-categories = ["gui", "network"]
+categories = ["network"]
 documentation = "https://docs.rs/openaws-vpn-client/"
 
 # Library configuration
@@ -18,12 +18,7 @@ documentation = "https://docs.rs/openaws-vpn-client/"
 name = "openaws_vpn"
 crate-type = ["cdylib", "rlib"]
 
-[[bin]]
-name = "openaws-vpn-client"
-path = "src/main.rs"
-
 [dependencies]
-gtk = { version = "=0.15.5", optional = true }
 lazy_static = "=1.4.0"
 tokio = { version = "=1.14.0", features = ["full"] }
 warp = "=0.3"
@@ -31,22 +26,13 @@ dirs = "=4.0.0"
 domain = { version = "=0.6.1", features = ["tokio", "resolv"] }
 rand = "=0.8.4"
 hex = "=0.4.3"
-open = { version = "=2.0.2", optional = true }
 tokio-stream = "=0.1.8"
 temp-dir = "=0.1.11"
-ctrlc = { version = "=3.2.1", optional = true }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 libc = "0.2"
 
 # For C API headers generation
 [build-dependencies]
 cbindgen = "0.24.0"
-
-# Features
-[features]
-default = ["gui"]
-gui = ["gtk", "open", "ctrlc"]
 
 [profile.release]
 strip = "symbols"

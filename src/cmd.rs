@@ -1,5 +1,6 @@
+use crate::local_config::LocalConfig;
+use crate::log::Log;
 use crate::saml_server::Saml;
-use crate::{LocalConfig, Log};
 use lazy_static::lazy_static;
 use std::env;
 use std::ffi::OsString;
@@ -15,7 +16,8 @@ const DEFAULT_PWD_FILE: &str = "./pwd.txt";
 
 lazy_static! {
     static ref SHARED_DIR: String = std::env::var("SHARED_DIR").unwrap_or("./share".to_string());
-    static ref OPENVPN_FILE: String = std::env::var("OPENVPN_FILE").unwrap_or("./openvpn/bin/openvpn".to_string());
+    static ref OPENVPN_FILE: String =
+        std::env::var("OPENVPN_FILE").unwrap_or("./openvpn/bin/openvpn".to_string());
 }
 
 pub struct ProcessInfo {
@@ -39,7 +41,11 @@ pub struct AwsSaml {
 pub async fn run_ovpn(log: Arc<Log>, config: PathBuf, addr: String, port: u16) -> AwsSaml {
     let path = Path::new(SHARED_DIR.as_str()).join(DEFAULT_PWD_FILE);
     if !path.exists() {
-        println!("{:?} does not exist in {:?}!", path, env::current_dir().unwrap());
+        println!(
+            "{:?} does not exist in {:?}!",
+            path,
+            env::current_dir().unwrap()
+        );
     }
     let out = tokio::process::Command::new(OPENVPN_FILE.as_str())
         .arg("--config")
