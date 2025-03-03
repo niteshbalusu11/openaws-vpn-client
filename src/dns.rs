@@ -76,30 +76,37 @@ impl DnsResolver {
 
     pub fn resolve_addresses(&self) {
         println!("Resolving addresses...");
-        println!("Attempting to lock remote mutex...");
-        let remote_lock = self.config.remote.lock();
-        println!("Got lock result: {:?}", remote_lock);
-        let remote = remote_lock.unwrap().deref().clone().unwrap();
-        println!("Released lock");
+        let remote_lock = self.config.remote.lock().unwrap();
+        let remote = remote_lock.deref().clone().unwrap();
 
-        let random_start = rng_domain();
+        // First try direct resolution without randomization
+        let mut all = self.resolve_to_ip_list(remote.0.clone());
 
-        let remote_with_rng_domain = format!("{}.{}", random_start, remote.0);
-        println!("Attempting to resolve: {}", remote_with_rng_domain);
-
-        let mut all = self.resolve_to_ip_list(remote_with_rng_domain.clone());
+        // Only try random prefix if direct resolution failed
         if all.is_empty() {
-            self.log.append(format!(
-                "Unable to resolve any addresses at '{}'.",
-                remote_with_rng_domain.as_str()
-            ));
-            self.log
-                .append("Attempting to resolve without any randomized domain...");
-            all = self.resolve_to_ip_list(remote.0);
-        };
+            let random_start = rng_domain();
+            let remote_with_rng_domain = format!("{}.{}", random_start, remote.0);
+            self.log.append(
+                format!(
+                    "Direct resolution failed, trying with random prefix: '{}'",
+                    remote_with_rng_domain
+                )
+                .as_str(),
+            );
 
+            all = self.resolve_to_ip_list(remote_with_rng_domain);
+        }
+
+        // Update the address list even if it's empty (caller should handle this)
         let mut br = self.config.addresses.lock().unwrap();
-        *br = Some(all);
+        if all.is_empty() {
+            self.log
+                .append("WARNING: Could not resolve any IP addresses. Using hostname directly.");
+            // Store None to indicate resolution failed
+            *br = None;
+        } else {
+            *br = Some(all);
+        }
     }
 }
 

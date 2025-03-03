@@ -38,6 +38,7 @@ pub struct AwsSaml {
     pub pwd: String,
 }
 
+// Modify the run_ovpn function in cmd.rs to ensure proper remote addressing
 pub async fn run_ovpn(log: Arc<Log>, config: PathBuf, addr: String, port: u16) -> AwsSaml {
     let path = Path::new(SHARED_DIR.as_str()).join(DEFAULT_PWD_FILE);
     if !path.exists() {
@@ -47,6 +48,10 @@ pub async fn run_ovpn(log: Arc<Log>, config: PathBuf, addr: String, port: u16) -
             env::current_dir().unwrap()
         );
     }
+
+    // Log the connection attempt
+    log.append(format!("Connecting to: {} port {}", addr, port).as_str());
+
     let out = tokio::process::Command::new(OPENVPN_FILE.as_str())
         .arg("--config")
         .arg(config)
@@ -106,6 +111,15 @@ pub async fn run_ovpn(log: Arc<Log>, config: PathBuf, addr: String, port: u16) -
         next = lines.next_line().await;
     }
 
+    // Handle case where auth info wasn't found
+    if addr.is_none() || pwd.is_none() {
+        log.append("Error: Failed to obtain SAML authentication URL");
+        return AwsSaml {
+            url: "Error: No authentication URL received".to_string(),
+            pwd: "Error: No password received".to_string(),
+        };
+    }
+
     AwsSaml {
         url: addr.unwrap(),
         pwd: pwd.unwrap(),
@@ -120,17 +134,53 @@ pub async fn connect_ovpn(
     saml: Saml,
     process_info: Arc<ProcessInfo>,
 ) -> i32 {
-    let temp = TempDir::new().unwrap();
-    let temp_pwd = temp.child("pwd.txt");
+    // Create temp directory with more reliable approach
+    let temp_dir = match std::env::temp_dir().to_str() {
+        Some(dir) => PathBuf::from(dir),
+        None => PathBuf::from("/tmp"), // Fallback
+    };
 
-    if temp_pwd.exists() {
-        remove_file(&temp_pwd).unwrap();
+    // Ensure temp directory exists
+    if !temp_dir.exists() {
+        if let Err(e) = std::fs::create_dir_all(&temp_dir) {
+            log.append(format!("Error creating temp directory: {}", e).as_str());
+            return -1;
+        }
     }
 
-    let mut save = File::create(&temp_pwd).unwrap();
-    write!(save, "N/A\nCRV1::{}::{}\n", saml.pwd, saml.data).unwrap();
+    let temp_pwd = temp_dir.join("ovpn_pwd.txt");
+    log.append(format!("Using password file at: {:?}", temp_pwd).as_str());
 
-    let b = std::fs::canonicalize(temp_pwd).unwrap().to_path_buf();
+    // Remove file if it exists
+    if temp_pwd.exists() {
+        if let Err(e) = remove_file(&temp_pwd) {
+            log.append(format!("Error removing existing password file: {}", e).as_str());
+        }
+    }
+
+    // Create file with password
+    match File::create(&temp_pwd) {
+        Ok(mut file) => {
+            if let Err(e) = write!(file, "N/A\nCRV1::{}::{}\n", saml.pwd, saml.data) {
+                log.append(format!("Error writing to password file: {}", e).as_str());
+                return -1;
+            }
+        }
+        Err(e) => {
+            log.append(format!("Error creating password file: {}", e).as_str());
+            return -1;
+        }
+    }
+
+    let pwd_path = match std::fs::canonicalize(&temp_pwd) {
+        Ok(path) => path,
+        Err(e) => {
+            log.append(format!("Error canonicalizing password file path: {}", e).as_str());
+            return -1;
+        }
+    };
+
+    log.append(format!("Connecting to {} port {} with SAML data", addr, port).as_str());
 
     let mut out = tokio::process::Command::new("pkexec")
         .arg(OPENVPN_FILE.as_str())
@@ -149,9 +199,9 @@ pub async fn connect_ovpn(
         .arg("--script-security")
         .arg("2")
         .arg("--route-up")
-        .arg(rm_file_command(&b))
+        .arg(rm_file_command(&pwd_path))
         .arg("--auth-user-pass")
-        .arg(b)
+        .arg(pwd_path)
         .stdout(Stdio::piped())
         .current_dir(SHARED_DIR.as_str())
         .kill_on_drop(true)

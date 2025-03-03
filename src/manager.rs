@@ -46,6 +46,7 @@ impl ConnectionManager {
         }
     }
 
+    // Replace the connect method in ConnectionManager (manager.rs)
     fn connect(&self) {
         println!("Connecting...");
         self.set_connecting();
@@ -60,39 +61,40 @@ impl ConnectionManager {
         let remote = app.config.remote.lock().unwrap().deref().clone();
         let addrs = app.config.addresses.lock().unwrap().deref().clone();
 
-        if let Some(addrs) = addrs {
-            if let Some(remote) = remote {
-                if let Some(file) = file {
-                    let log = app.log.clone();
-                    let first_addr = addrs[0].to_string();
-                    let config_file = file.clone();
-                    let port = remote.1;
-                    let pwd = app.config.pwd.clone();
+        if let Some(remote) = remote {
+            if let Some(file) = file {
+                let log = app.log.clone();
+                let config_file = file.clone();
+                let port = remote.1;
+                let pwd = app.config.pwd.clone();
 
-                    let join = app.runtime.spawn(async move {
-                        let mut lock = pwd.lock().await;
-                        let auth = run_ovpn(log, config_file, first_addr, port).await;
-                        *lock = Some(Pwd {
-                            pwd: auth.pwd.clone(),
-                        });
-                        auth.url
+                // Always use the hostname from the config file since DNS resolution is failing
+                let server_addr = remote.0.clone();
+                log.append(format!("Using hostname directly: {}", server_addr).as_str());
+
+                let join = app.runtime.spawn(async move {
+                    let mut lock = pwd.lock().await;
+                    let auth = run_ovpn(log, config_file, server_addr, port).await;
+                    *lock = Some(Pwd {
+                        pwd: auth.pwd.clone(),
                     });
+                    auth.url
+                });
 
-                    let task = OavcTask {
-                        name: "OpenVPN Initial SAML Process".to_string(),
-                        handle: join,
-                        log: app.log.clone(),
-                    };
+                let task = OavcTask {
+                    name: "OpenVPN Initial SAML Process".to_string(),
+                    handle: join,
+                    log: app.log.clone(),
+                };
 
-                    let mut openvpn = app.openvpn.lock().unwrap();
-                    *openvpn = Some(task);
-                }
+                let mut openvpn = app.openvpn.lock().unwrap();
+                *openvpn = Some(task);
                 return;
             }
         }
 
         self.set_disconnected();
-        app.log.append("No file selected");
+        app.log.append("No file selected or invalid configuration");
     }
 
     pub fn disconnect(&self) {

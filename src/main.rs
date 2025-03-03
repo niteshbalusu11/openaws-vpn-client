@@ -29,13 +29,12 @@ fn main() {
     println!("OpenAWS VPN Client Test");
 
     // Get OpenVPN config file path
-    let mut config_path = String::new();
     println!("Enter path to .ovpn config file:");
     //io::stdin()
     //    .lock()
     //    .read_line(&mut config_path)
     //    .expect("Failed to read config path");
-    config_path = "/Users/niteshchowdharybalusu/Downloads/zbdvpn.ovpn".to_string();
+    let config_path = "/Users/niteshchowdharybalusu/Downloads/zbdvpn.ovpn".to_string();
 
     // Create VPN client
     let client = ffi::openaws_vpn_client_new();
@@ -49,16 +48,19 @@ fn main() {
 
     println!("Setting configuration...");
     // Set configuration
-    let config_cstring = CString::new(config_path).unwrap();
-    let dummy_cstring = CString::new("").unwrap();
+    let config_cstring = CString::new(config_path.trim()).unwrap();
+    let server_cstring =
+        CString::new("cvpn-endpoint-0c0754930f80c0229.prod.clientvpn.us-east-1.amazonaws.com")
+            .unwrap();
 
     let config = ffi::VpnConfig {
         config_path: config_cstring.as_ptr(),
-        server_address: dummy_cstring.as_ptr(), // Will be read from config file
-        port: 0,                                // Will be read from config file
+        server_address: server_cstring.as_ptr(), // Explicitly set the server address
+        port: 443,
     };
 
-    println!("Config path: {:?}", config.config_path);
+    println!("Config path: {:?}", config_path);
+    println!("Server address: cvpn-endpoint-0c0754930f80c0229.prod.clientvpn.us-east-1.amazonaws.com:443");
 
     let result = ffi::openaws_vpn_client_set_config(client, config);
 
@@ -111,9 +113,14 @@ fn main() {
     saml_response = saml_response.trim().to_string();
 
     // Connect with SAML response
-    let saml_response_cstring = CString::new(saml_response).unwrap();
-    let saml_password_cstring = CString::new(password).unwrap();
+    // Save password for later use
+    let saml_password_copy = password.clone();
 
+    // Connect with SAML response
+    let saml_response_cstring = CString::new(saml_response).unwrap();
+    let saml_password_cstring = CString::new(saml_password_copy).unwrap();
+
+    println!("Connecting with SAML authentication...");
     let result = ffi::openaws_vpn_client_connect_saml(
         client,
         saml_response_cstring.as_ptr(),

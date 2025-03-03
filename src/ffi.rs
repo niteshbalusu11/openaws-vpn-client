@@ -214,10 +214,50 @@ pub extern "C" fn openaws_vpn_client_get_saml_url(
         state_manager.set_connecting();
     }
 
+    client
+        .vpn_app
+        .log
+        .append(format!("Connecting to VPN server: {} port {}", server, port).as_str());
+
+    // Use the resolved IP addresses if available
+    let server_addr = {
+        let addresses = client.vpn_app.config.addresses.lock().unwrap();
+        if let Some(addrs) = &*addresses {
+            if !addrs.is_empty() {
+                client
+                    .vpn_app
+                    .log
+                    .append(format!("Using resolved IP: {}", addrs[0]).as_str());
+                addrs[0].to_string()
+            } else {
+                client
+                    .vpn_app
+                    .log
+                    .append(format!("Using hostname: {}", server).as_str());
+                server
+            }
+        } else {
+            client
+                .vpn_app
+                .log
+                .append(format!("Using hostname: {}", server).as_str());
+            server
+        }
+    };
+
     // Run the initial OpenVPN process to get the SAML URL
     let auth_result = client.vpn_app.runtime.block_on(async {
-        crate::cmd::run_ovpn(client.vpn_app.log.clone(), config_path, server, port).await
+        crate::cmd::run_ovpn(client.vpn_app.log.clone(), config_path, server_addr, port).await
     });
+
+    // Check if we got valid auth info
+    if auth_result.url.starts_with("Error:") || auth_result.pwd.starts_with("Error:") {
+        client
+            .vpn_app
+            .log
+            .append("Failed to get SAML authentication URL");
+        return -1;
+    }
 
     // Convert the result to C strings
     let url_cstring = match CString::new(auth_result.url) {
