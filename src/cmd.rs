@@ -9,7 +9,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use temp_dir::TempDir;
 use tokio::io::AsyncBufReadExt;
 
 const DEFAULT_PWD_FILE: &str = "./pwd.txt";
@@ -75,53 +74,56 @@ pub async fn run_ovpn(log: Arc<Log>, config: PathBuf, addr: String, port: u16) -
     let buf = tokio::io::BufReader::new(stdout);
     let log = log.clone();
     let mut lines = buf.lines();
-
     let mut next = lines.next_line().await;
-    let mut addr = None::<String>;
+    let mut url = None::<String>;
     let mut pwd = None::<String>;
 
-    loop {
-        if let Ok(ref line) = next {
-            if let Some(line) = line {
-                log.append_process(pid, line.as_str());
-                let auth_prefix = "AUTH_FAILED,CRV1";
-                let prefix = "https://";
+    while let Ok(Some(line)) = next {
+        log.append_process(pid, line.as_str());
 
-                if line.contains(auth_prefix) {
-                    log.append_process(pid, format!("Found {} redirect url", line).as_str());
-                    let find = line.find(prefix).unwrap();
-                    addr = Some((&line[find..]).to_string());
+        // Look for the AUTH_FAILED message with SAML URL
+        if line.contains("AUTH_FAILED,CRV1") {
+            log.append_process(pid, format!("Found AUTH redirect: {}", line).as_str());
 
-                    let auth_find = line
-                        .find(auth_prefix)
-                        .map(|v| v + auth_prefix.len() + 1)
-                        .unwrap();
-
-                    let sub = &line[auth_find..find - 1];
-                    let e = sub.split(":").skip(1).next().unwrap();
-                    pwd = Some(e.to_string());
+            // Extract the instance ID which is the password
+            if let Some(start_idx) = line.find("CRV1:R:") {
+                let start_idx = start_idx + "CRV1:R:".len();
+                if let Some(end_idx) = line[start_idx..].find(":") {
+                    let instance_id = &line[start_idx..(start_idx + end_idx)];
+                    pwd = Some(instance_id.to_string());
+                    log.append(format!("Extracted SAML password: {}", instance_id).as_str());
                 }
-            } else {
+            }
+
+            // Extract the URL
+            if let Some(url_idx) = line.find("https://") {
+                url = Some(line[url_idx..].to_string());
+            }
+
+            // If we found both, we can stop
+            if url.is_some() && pwd.is_some() {
                 break;
             }
-        } else {
-            break;
         }
 
         next = lines.next_line().await;
     }
 
     // Handle case where auth info wasn't found
-    if addr.is_none() || pwd.is_none() {
-        log.append("Error: Failed to obtain SAML authentication URL");
+    if url.is_none() || pwd.is_none() {
+        log.append("Error: Failed to extract SAML authentication info");
         return AwsSaml {
             url: "Error: No authentication URL received".to_string(),
             pwd: "Error: No password received".to_string(),
         };
     }
 
+    // Log what we found for debugging
+    log.append(format!("Found SAML URL: {}", url.as_ref().unwrap()).as_str());
+    log.append(format!("Found SAML password: {}", pwd.as_ref().unwrap()).as_str());
+
     AwsSaml {
-        url: addr.unwrap(),
+        url: url.unwrap(),
         pwd: pwd.unwrap(),
     }
 }
@@ -134,44 +136,58 @@ pub async fn connect_ovpn(
     saml: Saml,
     process_info: Arc<ProcessInfo>,
 ) -> i32 {
-    // Create temp directory with more reliable approach
-    let temp_dir = match std::env::temp_dir().to_str() {
-        Some(dir) => PathBuf::from(dir),
-        None => PathBuf::from("/tmp"), // Fallback
-    };
-
-    // Ensure temp directory exists
-    if !temp_dir.exists() {
-        if let Err(e) = std::fs::create_dir_all(&temp_dir) {
-            log.append(format!("Error creating temp directory: {}", e).as_str());
-            return -1;
-        }
-    }
-
+    let temp_dir = std::env::temp_dir();
     let temp_pwd = temp_dir.join("ovpn_pwd.txt");
+
     log.append(format!("Using password file at: {:?}", temp_pwd).as_str());
 
-    // Remove file if it exists
+    // Remove existing file
     if temp_pwd.exists() {
-        if let Err(e) = remove_file(&temp_pwd) {
-            log.append(format!("Error removing existing password file: {}", e).as_str());
-        }
+        let _ = remove_file(&temp_pwd);
     }
 
-    // Create file with password
-    match File::create(&temp_pwd) {
-        Ok(mut file) => {
-            if let Err(e) = write!(file, "N/A\nCRV1::{}::{}\n", saml.pwd, saml.data) {
-                log.append(format!("Error writing to password file: {}", e).as_str());
+    // Create with secure permissions on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        match File::options()
+            .write(true)
+            .create(true)
+            .mode(0o600) // Owner-only permissions
+            .open(&temp_pwd)
+        {
+            Ok(mut file) => {
+                if let Err(e) = write!(file, "N/A\nCRV1::{}::{}\n", saml.pwd, saml.data) {
+                    log.append(format!("Error writing to password file: {}", e).as_str());
+                    return -1;
+                }
+            }
+            Err(e) => {
+                log.append(format!("Error creating password file: {}", e).as_str());
                 return -1;
             }
         }
-        Err(e) => {
-            log.append(format!("Error creating password file: {}", e).as_str());
-            return -1;
+    }
+
+    #[cfg(not(unix))]
+    {
+        // Non-Unix implementation
+        match File::create(&temp_pwd) {
+            Ok(mut file) => {
+                if let Err(e) = write!(file, "N/A\nCRV1::{}::{}\n", saml.pwd, saml.data) {
+                    log.append(format!("Error writing to password file: {}", e).as_str());
+                    return -1;
+                }
+            }
+            Err(e) => {
+                log.append(format!("Error creating password file: {}", e).as_str());
+                return -1;
+            }
         }
     }
 
+    // Rest of your connect_ovpn function
     let pwd_path = match std::fs::canonicalize(&temp_pwd) {
         Ok(path) => path,
         Err(e) => {
@@ -180,6 +196,7 @@ pub async fn connect_ovpn(
         }
     };
 
+    // Continue with OpenVPN command execution...
     log.append(format!("Connecting to {} port {} with SAML data", addr, port).as_str());
 
     let mut out = tokio::process::Command::new("pkexec")

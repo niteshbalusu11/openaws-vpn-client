@@ -33,14 +33,20 @@ impl SamlServer {
         let pwd = app.config.pwd.clone();
         let runtime = app.runtime.clone();
         let password_storage = self.saml_password.clone();
+        let app_clone = app.clone();
 
-        // Save the password when we first get it from OpenVPN
-        let _ = runtime.spawn(async move {
-            let pwd_lock = pwd.lock().await;
-            if let Some(ref pwd_val) = *pwd_lock {
-                let mut password = password_storage.lock().unwrap();
-                *password = pwd_val.pwd.clone();
-                println!("Saved SAML password: {}", pwd_val.pwd);
+        runtime.spawn(async move {
+            let pwd_opt = app_clone.config.pwd.lock().await;
+            if let Some(pwd) = &*pwd_opt {
+                let mut storage = password_storage.lock().unwrap();
+                *storage = pwd.pwd.clone();
+                app_clone
+                    .log
+                    .append(format!("SAML password stored: {}", pwd.pwd).as_str());
+            } else {
+                app_clone
+                    .log
+                    .append("Warning: No password available in config.pwd");
             }
         });
 
@@ -58,33 +64,20 @@ impl SamlServer {
                     async move {
                         let saml_data = data.get("SAMLResponse").cloned().unwrap_or_default();
 
-                        // Check if we have the SAMLResponse
-                        if saml_data.is_empty() {
-                            return Result::<WithStatus<_>, Rejection>::Ok(
-                                warp::reply::with_status(
-                                    "Error: Missing SAMLResponse field",
-                                    StatusCode::BAD_REQUEST,
-                                ),
-                            );
-                        }
+                        // Try multiple times to get password if it's empty
+                        let mut pwd_value = String::new();
+                        for _ in 0..5 {
+                            {
+                                let p = password.lock().unwrap();
+                                pwd_value = p.clone();
+                            }
 
-                        // Get the stored password
-                        let pwd_value = {
-                            let p = password.lock().unwrap();
-                            p.clone()
-                        };
+                            if !pwd_value.is_empty() {
+                                break;
+                            }
 
-                        if pwd_value.is_empty() {
-                            println!("WARNING: Password is empty!");
-                        } else {
-                            println!(
-                                "Using password: {}",
-                                if pwd_value.len() > 10 {
-                                    format!("{}...", &pwd_value[..10])
-                                } else {
-                                    pwd_value.clone()
-                                }
-                            );
+                            // Wait a bit before retrying
+                            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                         }
 
                         let saml = Saml {
