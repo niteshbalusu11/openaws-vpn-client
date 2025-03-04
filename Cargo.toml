@@ -5,18 +5,18 @@ edition = "2021"
 authors = ["KoresFramework", "Jonathan H. R. Lopes <jhrldev@gmail.com>"]
 license = "MIT"
 
+#
+
 description = "Unofficial open-source AWS VPN client written in Rust"
 homepage = "https://github.com/JonathanxD/openaws-vpn-client"
 repository = "https://github.com/JonathanxD/openaws-vpn-client"
 readme = "README.md"
 keywords = ["vpn", "openaws", "vpn-client"]
-categories = ["network"]
+categories = ["gui"]
 documentation = "https://docs.rs/openaws-vpn-client/"
 
-# Library configuration
-[lib]
-name = "openaws_vpn"
-crate-type = ["staticlib", "rlib"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 lazy_static = "=1.4.0"
@@ -26,15 +26,11 @@ dirs = "=4.0.0"
 domain = { version = "=0.6.1", features = ["tokio", "resolv"] }
 rand = "=0.8.4"
 hex = "=0.4.3"
+open = "=2.0.2"
 tokio-stream = "=0.1.8"
 temp-dir = "=0.1.11"
-libc = "0.2"
-
-# For C API headers generation
-[build-dependencies]
-cbindgen = "0.24.0"
+ctrlc = "=3.2.1"
+clap = "2.33"
 
 [profile.release]
 strip = "symbols"
-lto = true
-codegen-units = 1

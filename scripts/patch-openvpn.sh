@@ -28,8 +28,6 @@ fi
 ROOT_DIR="$(pwd)"
 mkdir -p "$ROOT_DIR/../share/openvpn"
 
-rm -rf tmp
-
 mkdir tmp
 cd tmp
 
@@ -37,14 +35,12 @@ cd tmp
 echo "Downloading OpenVPN..."
 curl https://raw.githubusercontent.com/OpenVPN/openvpn/master/COPYING --output "$ROOT_DIR/../share/openvpn/COPYING"
 curl https://raw.githubusercontent.com/OpenVPN/openvpn/master/COPYRIGHT.GPL --output "$ROOT_DIR/../share/openvpn/COPYRIGHT.GPL"
-curl https://build.openvpn.net/downloads/releases/openvpn-$OPENVPN_VERSION.tar.gz --output openvpn-$OPENVPN_VERSION.tar.gz
-echo "5ef80681e71aa84629d48b067b540c0e8169ee3ff4b1129fc0030a55f0f7e2bb9a9cd568aa627828d8adb1366f5b0cfdd37242fb5cb6cec4a50fea9ffe8805bc openvpn-$OPENVPN_VERSION.tar.gz" | sha512sum -c -
+curl https://swupdate.openvpn.org/community/releases/openvpn-$OPENVPN_VERSION.tar.gz --output openvpn-$OPENVPN_VERSION.tar.gz
+echo "5ef80681e71aa84629d48b067b540c0e8169ee3ff4b1129fc0030a55f0f7e2bb9a9cd568aa627828d8adb1366f5b0cfdd37242fb5cb6cec4a50fea9ffe8805bc  openvpn-$OPENVPN_VERSION.tar.gz" | sha512sum -c -
 echo "Decompressing OpenVPN..."
 tar -xf openvpn-$OPENVPN_VERSION.tar.gz
 rm -rf openvpn-$OPENVPN_VERSION.tar.gz
 cd openvpn-$OPENVPN_VERSION || exit 1
-
-echo "Downloading OpenVPN Patch by 'samm-git'..."
 
 # Apply OpenVPN patch by 'samm-git'
 echo "Downloading OpenVPN Patch by 'samm-git'..."

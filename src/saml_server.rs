@@ -1,29 +1,26 @@
-use crate::app::VpnApp;
 use crate::cmd::{connect_ovpn, ProcessInfo};
 use crate::config::Pwd;
+use crate::state_manager::{self, StateManager};
 use crate::task::{OavcProcessTask, OavcTask};
+use crate::VpnApp;
 use std::collections::HashMap;
 use std::ops::Deref;
+use std::rc::Rc;
 use std::sync::mpsc::SyncSender;
-use std::sync::{Arc, Mutex};
-use tokio::sync::Mutex as TokioMutex;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use warp::http::StatusCode;
 use warp::reply::WithStatus;
 use warp::{Filter, Rejection};
 
-pub struct SamlServer {
-    // Add storage for SAML password
-    saml_password: Arc<Mutex<String>>,
-}
+pub struct SamlServer {}
 
 impl SamlServer {
     pub fn new() -> SamlServer {
-        SamlServer {
-            saml_password: Arc::new(Mutex::new(String::new())),
-        }
+        SamlServer {}
     }
 
-    pub fn start_server(&self, app: Arc<VpnApp>) {
+    pub fn start_server(&self, app: Rc<VpnApp>) {
         app.log.append("Starting SAML server at 0.0.0.0:35001...");
         let (tx, rx) = std::sync::mpsc::sync_channel::<Saml>(1);
 
@@ -31,69 +28,25 @@ impl SamlServer {
         let sender = warp::any().map(move || tx.clone());
 
         let pwd = app.config.pwd.clone();
+        let pwd = warp::any().map(move || pwd.clone());
         let runtime = app.runtime.clone();
-        let password_storage = self.saml_password.clone();
-        let app_clone = app.clone();
-
-        runtime.spawn(async move {
-            let pwd_opt = app_clone.config.pwd.lock().await;
-            if let Some(pwd) = &*pwd_opt {
-                let mut storage = password_storage.lock().unwrap();
-                *storage = pwd.pwd.clone();
-                app_clone
-                    .log
-                    .append(format!("SAML password stored: {}", pwd.pwd).as_str());
-            } else {
-                app_clone
-                    .log
-                    .append("Warning: No password available in config.pwd");
-            }
-        });
-
-        // Clone for the handler
-        let password_for_handler = self.saml_password.clone();
 
         let saml = warp::post()
             .and(warp::body::form())
             .and(sender)
-            .and(warp::any().map(move || password_for_handler.clone()))
+            .and(pwd)
             .and_then(
                 move |data: HashMap<String, String>,
                       sender: SyncSender<Saml>,
-                      password: Arc<Mutex<String>>| {
+                      pwd: Arc<Mutex<Option<Pwd>>>| {
                     async move {
-                        let saml_data = data.get("SAMLResponse").cloned().unwrap_or_default();
-
-                        // Try multiple times to get password if it's empty
-                        let mut pwd_value = String::new();
-                        for _ in 0..5 {
-                            {
-                                let p = password.lock().unwrap();
-                                pwd_value = p.clone();
-                            }
-
-                            if !pwd_value.is_empty() {
-                                break;
-                            }
-
-                            // Wait a bit before retrying
-                            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                        }
-
+                        let pwd = pwd.lock().await;
                         let saml = Saml {
-                            data: saml_data,
-                            pwd: pwd_value,
+                            data: data["SAMLResponse"].clone(),
+                            pwd: pwd.deref().as_ref().unwrap().pwd.clone(),
                         };
-
-                        // Only send if we have valid data
-                        if !saml.pwd.is_empty() {
-                            sender.send(saml).unwrap_or_else(|e| {
-                                println!("Failed to send SAML data: {:?}", e);
-                            });
-                            println!("Got SAML data with valid password!");
-                        } else {
-                            println!("Got SAML data but password was empty!");
-                        }
+                        sender.send(saml).unwrap();
+                        println!("Got SAML data!");
 
                         Result::<WithStatus<_>, Rejection>::Ok(warp::reply::with_status(
                             "Got SAMLResponse field, it is now safe to close this window",
@@ -112,9 +65,7 @@ impl SamlServer {
             log,
         };
 
-        let mut server = app.server.lock().unwrap();
-        *server = Some(join);
-
+        app.server.replace(Some(join));
         let log = app.log.clone();
         let addr = app.config.addresses.clone();
         let port = app.config.remote.clone();
@@ -126,61 +77,23 @@ impl SamlServer {
         std::thread::spawn(move || loop {
             let data = rx.recv().unwrap();
             {
-                log.append(format!("SAML Data received (length: {})", data.data.len()).as_str());
-                log.append(
-                    format!(
-                        "SAML Password: {}",
-                        if data.pwd.is_empty() {
-                            "EMPTY!"
-                        } else {
-                            "VALID"
-                        }
-                    )
-                    .as_str(),
-                );
+                log.append(format!("SAML Data: {:?}...", &data.data[..6]).as_str());
             }
 
             let addr = {
                 let addr = addr.clone();
                 let addr = addr.lock().unwrap();
-                if let Some(addrs) = &*addr {
-                    if !addrs.is_empty() {
-                        addrs[0].to_string()
-                    } else {
-                        "".to_string()
-                    }
-                } else {
-                    "".to_string()
-                }
+                addr.as_ref().unwrap()[0].to_string()
             };
-
-            if addr.is_empty() {
-                log.append("Error: No IP address available for connection");
-                continue;
-            }
-
             let config = {
                 let config = config.clone();
                 let config = config.lock().unwrap();
-                match &*config {
-                    Some(path) => path.clone(),
-                    None => {
-                        log.append("Error: No config file available");
-                        continue;
-                    }
-                }
+                config.as_ref().unwrap().clone()
             };
-
             let port = {
                 let port = port.clone();
                 let port = port.lock().unwrap();
-                match &*port {
-                    Some((_addr, port)) => *port,
-                    None => {
-                        log.append("Error: No port available");
-                        continue;
-                    }
-                }
+                port.as_ref().unwrap().clone().1
             };
 
             let info = Arc::new(ProcessInfo::new());
@@ -189,19 +102,10 @@ impl SamlServer {
                 let info = info.clone();
                 let log = log.clone();
                 let manager = manager.clone();
-                log.append(
-                    format!(
-                        "Connecting to {} port {} with SAML authentication",
-                        addr, port
-                    )
-                    .as_str(),
-                );
                 runtime.clone().spawn(async move {
                     let con = connect_ovpn(log.clone(), config, addr, port, data, info).await;
                     let man = manager.lock().unwrap();
-                    if let Some(ref man) = *man {
-                        man.disconnect();
-                    }
+                    man.as_ref().unwrap().try_disconnect();
                     con
                 })
             };
@@ -213,10 +117,11 @@ impl SamlServer {
                 *st = Some(task);
             }
 
-            let state_manager = stager.clone();
-            let state_mgr = state_manager.lock().unwrap();
-            if let Some(ref state_mgr) = *state_mgr {
-                state_mgr.set_connected();
+            // Fix for the temporary value issue
+            let stager_clone = stager.clone();
+            let stager_guard = stager_clone.lock().unwrap();
+            if let Some(state_manager) = stager_guard.as_ref() {
+                state_manager.set_connected();
             }
         });
     }

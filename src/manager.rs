@@ -1,13 +1,13 @@
-use crate::app::State;
-use crate::app::VpnApp;
 use crate::cmd::run_ovpn;
 use crate::config::Pwd;
 use crate::task::OavcTask;
+use crate::{State, VpnApp};
 use std::ops::Deref;
-use std::sync::{Arc, Mutex};
+use std::rc::{Rc, Weak};
+use std::sync::Mutex;
 
 pub struct ConnectionManager {
-    pub app: Arc<Mutex<Option<Arc<VpnApp>>>>,
+    pub app: Mutex<Weak<VpnApp>>,
 }
 
 unsafe impl Send for ConnectionManager {}
@@ -16,168 +16,194 @@ unsafe impl Sync for ConnectionManager {}
 impl ConnectionManager {
     pub fn new() -> Self {
         Self {
-            app: Arc::new(Mutex::new(None)),
+            app: Mutex::new(Weak::new()),
         }
     }
 
-    pub fn set_app(&self, app: Arc<VpnApp>) {
+    pub fn set_app(&self, app: Rc<VpnApp>) {
         let mut l = self.app.lock().unwrap();
-        *l = Some(app);
+        *l = Rc::downgrade(&app);
     }
 
     pub fn change_connect_state(&self) {
         let state = {
-            let app_lock = self.app.lock().unwrap();
-            let app = match app_lock.as_ref() {
-                Some(app) => app.clone(),
-                None => return,
-            };
-            let state_lock = app.state.lock().unwrap();
-            match state_lock.as_ref() {
-                Some(state_manager) => state_manager.get_state(),
-                None => return,
-            }
+            let app = self.app.lock().unwrap();
+            let app = app.upgrade().unwrap();
+            let state = { *(app.state.lock().unwrap()).as_ref().unwrap().state.borrow() };
+            app.log.append(format!("Handling... {:?}", &state));
+            state
         };
 
         match state {
             State::Disconnected => self.connect(),
             State::Connected => self.disconnect(),
-            State::Connecting => self.disconnect(),
+            State::Connecting => self.try_disconnect(),
         }
     }
 
-    // Replace the connect method in ConnectionManager (manager.rs)
-    fn connect(&self) {
+    pub fn try_disconnect(&self) {
+        let state = {
+            let app = self.app.lock().unwrap();
+            let app = app.upgrade().unwrap();
+            let state = { *(app.state.lock().unwrap()).as_ref().unwrap().state.borrow() };
+            app.log.append(format!("Handling... {:?}", &state));
+            state
+        };
+
+        match state {
+            State::Disconnected => (),
+            _ => self.disconnect(),
+        }
+    }
+
+    pub fn connect(&self) {
         println!("Connecting...");
         self.set_connecting();
 
-        let app_lock = self.app.lock().unwrap();
-        let app = match app_lock.as_ref() {
-            Some(app) => app.clone(),
-            None => return,
+        let (file, remote, addrs) = {
+            let app = self.app.lock().unwrap();
+            let app = app.upgrade().unwrap();
+
+            (
+                {
+                    let x = app.config.config.lock().unwrap().deref().clone();
+                    x
+                },
+                {
+                    let x = app.config.remote.lock().unwrap().deref().clone();
+                    x
+                },
+                {
+                    let x = app.config.addresses.lock().unwrap().deref().clone();
+                    x
+                },
+            )
         };
 
-        let file = app.config.config.lock().unwrap().deref().clone();
-        let remote = app.config.remote.lock().unwrap().deref().clone();
-        let addrs = app.config.addresses.lock().unwrap().deref().clone();
+        if let Some(ref addrs) = addrs {
+            if let Some(ref remote) = remote {
+                if let Some(ref file) = file {
+                    let log = {
+                        let app = self.app.lock().unwrap();
+                        let app = app.upgrade().unwrap();
+                        app.log.clone()
+                    };
 
-        if let Some(remote) = remote {
-            if let Some(file) = file {
-                let log = app.log.clone();
-                let config_file = file.clone();
-                let port = remote.1;
-                let pwd = app.config.pwd.clone();
+                    let first_addr = addrs[0].to_string();
+                    let config_file = file.clone();
+                    let port = remote.1;
 
-                // Always use the hostname from the config file since DNS resolution is failing
-                let server_addr = remote.0.clone();
-                log.append(format!("Using hostname directly: {}", server_addr).as_str());
+                    let pwd = {
+                        let app = self.app.lock().unwrap();
+                        let app = app.upgrade().unwrap();
+                        app.config.pwd.clone()
+                    };
 
-                let join = app.runtime.spawn(async move {
-                    let mut lock = pwd.lock().await;
-                    let auth = run_ovpn(log, config_file, server_addr, port).await;
-                    *lock = Some(Pwd {
-                        pwd: auth.pwd.clone(),
-                    });
-                    auth.url
-                });
+                    let join = {
+                        let app = self.app.lock().unwrap();
+                        let app = app.upgrade().unwrap();
+                        let log = log.clone();
 
-                let task = OavcTask {
-                    name: "OpenVPN Initial SAML Process".to_string(),
-                    handle: join,
-                    log: app.log.clone(),
-                };
+                        app.runtime.spawn(async move {
+                            let mut lock = pwd.lock().await;
+                            let auth = run_ovpn(log, config_file, first_addr, port).await; // Failure point addrs[0]
+                            *lock = Some(Pwd { pwd: auth.pwd });
 
-                let mut openvpn = app.openvpn.lock().unwrap();
-                *openvpn = Some(task);
+                            println!("Please authenticate in your browser: {}", auth.url);
+                            open::that(auth.url).unwrap()
+                        })
+                    };
+
+                    let log = log.clone();
+                    let app = self.app.lock().unwrap();
+                    let app = app.upgrade().unwrap();
+                    app.openvpn.replace(Some(OavcTask {
+                        name: "OpenVPN Initial SAML Process".to_string(),
+                        handle: join,
+                        log,
+                    }));
+                }
                 return;
             }
         }
 
         self.set_disconnected();
-        app.log.append("No file selected or invalid configuration");
-    }
 
-    pub fn disconnect(&self) {
-        let app_lock = self.app.lock().unwrap();
-        let app = match app_lock.as_ref() {
-            Some(app) => app.clone(),
-            None => return,
-        };
-
-        app.log.append("Disconnecting...");
-        self.set_disconnected();
-
-        let mut openvpn = app.openvpn.lock().unwrap();
-        if let Some(ref srv) = openvpn.take() {
-            srv.abort(true);
-            app.log.append("OpenVPN Auth Disconnected!");
-        }
-
-        let mut openvpn_connection = app.openvpn_connection.lock().unwrap();
-        if let Some(ref conn) = openvpn_connection.take() {
-            conn.abort(true);
-            app.log.append("OpenVPN disconnected!");
-        }
-
-        app.log.append("Disconnected!");
+        let app = self.app.lock().unwrap();
+        let app = app.upgrade().unwrap();
+        app.log.append("No file selected");
     }
 
     pub fn force_disconnect(&self) {
         println!("Forcing disconnect...");
 
-        let app_lock = self.app.lock().unwrap();
-        let app = match app_lock.as_ref() {
-            Some(app) => app.clone(),
-            None => return,
-        };
+        let app = self.app.lock().unwrap();
+        let app = app.upgrade().unwrap();
+        let mut openvpn = app.openvpn.borrow_mut();
 
-        let mut openvpn = app.openvpn.lock().unwrap();
         if let Some(ref srv) = openvpn.take() {
             srv.abort(false);
         }
 
-        let mut openvpn_connection = app.openvpn_connection.lock().unwrap();
+        let openvpn_connection = app.openvpn_connection.clone();
+        let mut openvpn_connection = openvpn_connection.lock().unwrap();
         if let Some(ref conn) = openvpn_connection.take() {
             conn.abort(false);
         }
     }
 
-    fn set_connecting(&self) {
-        let app_lock = self.app.lock().unwrap();
-        let app = match app_lock.as_ref() {
-            Some(app) => app,
-            None => return,
-        };
+    pub fn disconnect(&self) {
+        {
+            let app = self.app.lock().unwrap();
+            let app = app.upgrade().unwrap();
 
-        let state_lock = app.state.lock().unwrap();
-        if let Some(state_manager) = state_lock.as_ref() {
-            state_manager.set_connecting();
+            app.log.append("Disconnecting...");
         }
+
+        self.set_disconnected();
+
+        {
+            let app = self.app.lock().unwrap();
+            let app = app.upgrade().unwrap();
+
+            let mut openvpn = app.openvpn.borrow_mut();
+
+            if let Some(ref srv) = openvpn.take() {
+                srv.abort(true);
+                app.log.append("OpenVPN Auth Disconnected!");
+            }
+
+            let openvpn_connection = app.openvpn_connection.clone();
+            let mut openvpn_connection = openvpn_connection.lock().unwrap();
+            if let Some(ref conn) = openvpn_connection.take() {
+                conn.abort(true);
+                app.log.append("OpenVPN disconnected!");
+            }
+
+            app.log.append("Disconnected!");
+        }
+    }
+
+    fn set_connecting(&self) {
+        let app = self.app.lock().unwrap();
+        let app = app.upgrade().unwrap();
+        app.state.lock().unwrap().as_ref().unwrap().set_connecting();
     }
 
     fn set_disconnected(&self) {
-        let app_lock = self.app.lock().unwrap();
-        let app = match app_lock.as_ref() {
-            Some(app) => app,
-            None => return,
-        };
-
-        let state_lock = app.state.lock().unwrap();
-        if let Some(state_manager) = state_lock.as_ref() {
-            state_manager.set_disconnected();
-        }
+        let app = self.app.lock().unwrap();
+        let app = app.upgrade().unwrap();
+        app.state
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .set_disconnected();
     }
 
     fn _set_connected(&self) {
-        let app_lock = self.app.lock().unwrap();
-        let app = match app_lock.as_ref() {
-            Some(app) => app,
-            None => return,
-        };
-
-        let state_lock = app.state.lock().unwrap();
-        if let Some(state_manager) = state_lock.as_ref() {
-            state_manager.set_connected();
-        }
+        let app = self.app.lock().unwrap();
+        let app = app.upgrade().unwrap();
+        app.state.lock().unwrap().as_ref().unwrap().set_connected();
     }
 }

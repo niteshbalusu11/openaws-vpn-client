@@ -109,22 +109,14 @@ fn has_key(key: String) -> bool {
 }
 
 fn get_remote(content: &String) -> (String, u16) {
-    let remote_line = content.lines().find(|p| p.starts_with("remote "));
-
-    if let Some(line) = remote_line {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 3 {
-            let addr = parts[1].to_string();
-            let port = parts[2].parse::<u16>().unwrap_or(443);
-            println!("Extracted remote: {} port {}", addr, port);
-            return (addr, port);
-        }
-    }
-
-    // Default fallback
-    println!("WARNING: Could not extract remote from config, using defaults");
-    (
-        "cvpn-endpoint-0c0754930f80c0229.prod.clientvpn.us-east-1.amazonaws.com".to_string(),
-        443,
-    )
+    return content
+        .lines()
+        .filter(|p| p.starts_with("remote "))
+        .map(|p| {
+            let addr = (&p["remote ".len()..p.rfind(" ").unwrap()]).to_string();
+            let port = (&p[p.rfind(" ").unwrap() + 1..]).parse::<u16>().unwrap();
+            (addr, port)
+        })
+        .next()
+        .unwrap();
 }
