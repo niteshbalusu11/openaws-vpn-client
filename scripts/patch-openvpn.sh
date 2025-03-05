@@ -28,7 +28,7 @@ fi
 ROOT_DIR="$(pwd)"
 mkdir -p "$ROOT_DIR/../share/openvpn"
 
-mkdir - p tmp
+mkdir -p tmp
 cd tmp
 
 # Download OpenVPN
