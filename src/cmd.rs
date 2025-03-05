@@ -34,9 +34,9 @@ static ref DEFAULT_PWD_FILE: String = {
 
     // Create properly formatted file if it doesn't exist
     if let Ok(mut file) = File::create(&path) {
-        // OpenVPN requires two non-empty lines: username and password
-        writeln!(file, "placeholder_username").unwrap_or_else(|e| eprintln!("Error writing username: {}", e));
-        writeln!(file, "placeholder_password").unwrap_or_else(|e| eprintln!("Error writing password: {}", e));
+        // Initial auth needs "N/A" and "ACS::35001"
+        writeln!(file, "N/A").unwrap_or_else(|e| eprintln!("Error writing username: {}", e));
+        writeln!(file, "ACS::35001").unwrap_or_else(|e| eprintln!("Error writing password: {}", e));
     }
 
     path.to_string_lossy().to_string()
@@ -270,15 +270,16 @@ pub async fn connect_ovpn(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&temp_pwd).unwrap().permissions();
-        perms.set_mode(0o600); // User read/write, no group/other access
-        std::fs::set_permissions(&temp_pwd, perms).unwrap();
+        if let Ok(mut perms) = std::fs::metadata(&temp_pwd).map(|m| m.permissions()) {
+            perms.set_mode(0o600); // User read/write only
+            let _ = std::fs::set_permissions(&temp_pwd, perms);
+            log.append("Set secure permissions on pwd file");
+        }
     }
 
     println!("Temp pwd file: {}", temp_pwd.to_string_lossy());
 
-    write!(save, "SAML\nCRV1::{}::{}\n", saml.pwd, saml.data).unwrap_or_else(|e| {
-        println!("Failed to write to temp pwd file: {}", e);
+    write!(save, "N/A\nCRV1::{}::{}\n", saml.pwd, saml.data).unwrap_or_else(|e| {
         log.append(format!("Failed to write to temp pwd file: {}", e));
     });
 
@@ -320,6 +321,9 @@ pub async fn connect_ovpn(
         .arg("--auth-nocache")
         .arg("--inactive")
         .arg("3600")
+        .arg("--auth-retry")
+        .arg("none")
+        .arg("--pull")
         .arg("--proto")
         .arg("udp")
         .arg("--remote")
