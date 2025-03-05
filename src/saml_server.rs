@@ -1,8 +1,8 @@
+use crate::app::VpnApp;
 use crate::cmd::{connect_ovpn, ProcessInfo};
 use crate::config::Pwd;
 use crate::state_manager::{self, StateManager};
 use crate::task::{OavcProcessTask, OavcTask};
-use crate::VpnApp;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::rc::Rc;

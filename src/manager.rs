@@ -1,7 +1,7 @@
+use crate::app::{State, VpnApp};
 use crate::cmd::run_ovpn;
 use crate::config::Pwd;
 use crate::task::OavcTask;
-use crate::{State, VpnApp};
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
 use std::sync::Mutex;

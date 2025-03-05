@@ -1,9 +1,9 @@
 use crate::config::Config;
 use crate::dns::DnsResolver;
 use crate::log::Log;
+use crate::manager::ConnectionManager;
 use crate::state_manager::StateManager;
 use crate::task::{OavcProcessTask, OavcTask};
-use crate::ConnectionManager;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};

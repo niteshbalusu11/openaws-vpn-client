@@ -5,8 +5,6 @@ edition = "2021"
 authors = ["KoresFramework", "Jonathan H. R. Lopes <jhrldev@gmail.com>"]
 license = "MIT"
 
-#
-
 description = "Unofficial open-source AWS VPN client written in Rust"
 homepage = "https://github.com/JonathanxD/openaws-vpn-client"
 repository = "https://github.com/JonathanxD/openaws-vpn-client"
@@ -15,8 +13,14 @@ keywords = ["vpn", "openaws", "vpn-client"]
 categories = ["gui"]
 documentation = "https://docs.rs/openaws-vpn-client/"
 
+# Configure both CLI binary and library outputs
+[[bin]]
+name = "openaws-vpn-client"
+path = "src/main.rs"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "openaws_vpn_client"
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 lazy_static = "=1.4.0"
@@ -32,5 +36,17 @@ temp-dir = "=0.1.11"
 ctrlc = "=3.2.1"
 clap = "2.33"
 
+# Android-specific dependencies
+[target.'cfg(target_os = "android")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+cbindgen = "0.24.0"
+
+[build-dependencies]
+cbindgen = "0.24.0"
+
 [profile.release]
 strip = "symbols"
+lto = true
+opt-level = 3

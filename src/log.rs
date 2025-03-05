@@ -39,4 +39,32 @@ impl Log {
         let mut buffer = self.view.buffer.lock().unwrap();
         buffer.push(text.clone());
     }
+
+    // New method to get the last log message with a callback
+    pub fn get_last_log<F>(&self, callback: Box<F>)
+    where
+        F: FnOnce(&str) + Send + 'static,
+    {
+        let buffer = self.view.buffer.lock().unwrap();
+        if let Some(last) = buffer.last() {
+            callback(last);
+        } else {
+            callback("");
+        }
+    }
+
+    // New method to get all log messages
+    pub fn get_all_logs<F>(&self, callback: Box<F>)
+    where
+        F: FnOnce(&[String]) + Send + 'static,
+    {
+        let buffer = self.view.buffer.lock().unwrap();
+        callback(&buffer);
+    }
+
+    // New method to clear logs
+    pub fn clear(&self) {
+        let mut buffer = self.view.buffer.lock().unwrap();
+        buffer.clear();
+    }
 }

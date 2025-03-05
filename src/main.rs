@@ -3,6 +3,7 @@ mod cmd;
 mod config;
 mod consts;
 mod dns;
+mod ffi; // Add FFI module
 mod local_config;
 mod log;
 mod manager;
@@ -23,9 +24,9 @@ use std::time::Duration;
 fn main() {
     // Command line argument parsing
     let matches = App::new("OpenAwsVpnClient")
-        .version("1.0")
-        .author("Your Name <your.email@example.com>")
-        .about("Command line AWS VPN client")
+        .version("0.1.8")
+        .author("KoresFramework")
+        .about("Unofficial open-source AWS VPN client")
         .arg(
             Arg::with_name("config")
                 .short("c")

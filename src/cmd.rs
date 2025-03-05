@@ -1,6 +1,6 @@
+use crate::local_config::LocalConfig;
 use crate::log::Log;
 use crate::saml_server::Saml;
-use crate::LocalConfig;
 use lazy_static::lazy_static;
 use std::env;
 use std::ffi::OsString;
