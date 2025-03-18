@@ -80,7 +80,18 @@ impl ConnectionManager {
             )
         };
 
+        // Check if addresses are available first
         if let Some(ref addrs) = addrs {
+            if addrs.is_empty() {
+                // Handle the case where DNS resolution failed to find any addresses
+                let app = self.app.lock().unwrap();
+                let app = app.upgrade().unwrap();
+                app.log
+                    .append("Error: DNS resolution failed - no addresses found for VPN endpoint");
+                self.set_disconnected();
+                return;
+            }
+
             if let Some(ref remote) = remote {
                 if let Some(ref file) = file {
                     let log = {
@@ -89,7 +100,7 @@ impl ConnectionManager {
                         app.log.clone()
                     };
 
-                    let first_addr = addrs[0].to_string();
+                    let first_addr = addrs[0].to_string(); // Now safe because we checked if it's empty
                     let config_file = file.clone();
                     let port = remote.1;
 
@@ -106,7 +117,7 @@ impl ConnectionManager {
 
                         app.runtime.spawn(async move {
                             let mut lock = pwd.lock().await;
-                            let auth = run_ovpn(log, config_file, first_addr, port).await; // Failure point addrs[0]
+                            let auth = run_ovpn(log, config_file, first_addr, port).await;
                             *lock = Some(Pwd { pwd: auth.pwd });
 
                             println!("Please authenticate in your browser: {}", auth.url);
@@ -122,18 +133,28 @@ impl ConnectionManager {
                         handle: join,
                         log,
                     }));
+                    return;
                 }
-                return;
             }
         }
 
-        self.set_disconnected();
-
+        // If we get here, something is missing (file, remote, or addresses)
         let app = self.app.lock().unwrap();
         let app = app.upgrade().unwrap();
-        app.log.append("No file selected");
-    }
 
+        if addrs.is_none() || addrs.as_ref().unwrap().is_empty() {
+            app.log
+                .append("Error: DNS resolution failed for VPN endpoint");
+        } else if remote.is_none() {
+            app.log.append("Error: Remote configuration missing");
+        } else if file.is_none() {
+            app.log.append("Error: No VPN configuration file selected");
+        } else {
+            app.log.append("Error: Unknown connection issue");
+        }
+
+        self.set_disconnected();
+    }
     pub fn force_disconnect(&self) {
         println!("Forcing disconnect...");
 
